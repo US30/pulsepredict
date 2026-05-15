@@ -1,0 +1,16 @@
+model: tft
+horizon: 28
+input_size: 104
+hidden_size: 256
+n_heads: 4
+attn_dropout: 0.1
+dropout: 0.1
+batch_size: 16
+max_steps: 5000
+learning_rate: 5.0e-4
+loss: MQLoss
+quantiles: [0.1, 0.5, 0.9]
+static_covs: []
+time_varying_known: []
+accelerator: gpu
+devices: 1

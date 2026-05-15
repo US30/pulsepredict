@@ -1,0 +1,183 @@
+version: "3.9"
+
+# =============================================================================
+#  PulsePredict — Docker Compose
+# =============================================================================
+
+# Shared environment variables injected into api and worker services.
+x-common-env: &common-env
+  POSTGRES_HOST:         postgres
+  POSTGRES_PORT:         "5432"
+  POSTGRES_DB:           pulsepredict
+  POSTGRES_USER:         pulsepredict
+  POSTGRES_PASSWORD:     changeme
+  DATABASE_URL:          postgresql://pulsepredict:changeme@postgres:5432/pulsepredict
+  REDIS_URL:             redis://redis:6379/0
+  CELERY_BROKER_URL:     redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  MINIO_ENDPOINT:        minio:9000
+  MINIO_ACCESS_KEY:      minioadmin
+  MINIO_SECRET_KEY:      minioadmin
+  MINIO_BUCKET:          pulsepredict-data
+  MLFLOW_TRACKING_URI:   http://mlflow:5001
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       pulsepredict
+      POSTGRES_USER:     pulsepredict
+      POSTGRES_PASSWORD: changeme
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulsepredict -d pulsepredict"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── MinIO ───────────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:RELEASE.2024-07-16T23-46-41Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER:     minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── MLflow ──────────────────────────────────────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.15.0
+    restart: unless-stopped
+    command: >
+      mlflow server
+        --host 0.0.0.0
+        --port 5001
+        --backend-store-uri sqlite:///mlflow/mlflow.db
+        --default-artifact-root s3://pulsepredict-mlflow/
+    environment:
+      MLFLOW_S3_ENDPOINT_URL:    http://minio:9000
+      AWS_ACCESS_KEY_ID:         minioadmin
+      AWS_SECRET_ACCESS_KEY:     minioadmin
+    ports:
+      - "5001:5001"
+    volumes:
+      - mlflow_data:/mlflow
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  # ── FastAPI ─────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ── Celery worker ───────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    restart: unless-stopped
+    command: celery -A services.worker.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      <<: *common-env
+      LOG_LEVEL: INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Streamlit UI ────────────────────────────────────────────────────────────
+  ui:
+    build:
+      context: .
+      dockerfile: apps/ui/Dockerfile
+    restart: unless-stopped
+    environment:
+      API_BASE_URL:          http://api:8000
+      MLFLOW_TRACKING_URI:   http://mlflow:5001
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+
+  # ── Prometheus ──────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    restart: unless-stopped
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+
+  # ── Grafana ─────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.1.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED:  "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  minio_data:
+  mlflow_data:
+  grafana_data:

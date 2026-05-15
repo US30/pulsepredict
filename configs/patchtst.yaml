@@ -1,0 +1,16 @@
+model: patchtst
+horizon: 28
+input_size: 104
+patch_len: 16
+stride: 8
+d_model: 128
+n_heads: 16
+n_layers: 3
+dropout: 0.1
+batch_size: 32
+max_steps: 5000
+learning_rate: 1.0e-4
+loss: MQLoss
+quantiles: [0.1, 0.5, 0.9]
+accelerator: gpu
+devices: 1

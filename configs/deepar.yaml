@@ -1,0 +1,13 @@
+model: deepar
+horizon: 28
+input_size: 52
+hidden_size: 64
+n_layers: 2
+dropout: 0.1
+batch_size: 32
+max_steps: 3000
+learning_rate: 1.0e-3
+loss: DistributionLoss
+distribution: Normal
+accelerator: gpu
+devices: 1

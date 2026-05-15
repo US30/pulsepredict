@@ -1,0 +1,138 @@
+{
+  "__inputs": [],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "11.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "description": "PulsePredict API request rate, latency, and error metrics.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "graph",
+      "title": "Request Rate (req/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(forecast_requests_total[5m])",
+          "legendFormat": "{{model}} / {{status}}",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        { "format": "reqps", "label": "req/s", "show": true },
+        { "show": false }
+      ],
+      "xaxis": { "show": true },
+      "lines": true,
+      "fill": 1,
+      "linewidth": 2,
+      "nullPointMode": "null"
+    },
+    {
+      "id": 2,
+      "type": "graph",
+      "title": "P99 Latency (s)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(forecast_latency_seconds_bucket[5m])) by (le, model))",
+          "legendFormat": "p99 {{model}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(forecast_latency_seconds_bucket[5m])) by (le, model))",
+          "legendFormat": "p50 {{model}}",
+          "refId": "B"
+        }
+      ],
+      "yaxes": [
+        { "format": "s", "label": "Latency", "show": true },
+        { "show": false }
+      ],
+      "xaxis": { "show": true },
+      "lines": true,
+      "fill": 1,
+      "linewidth": 2,
+      "nullPointMode": "null"
+    },
+    {
+      "id": 3,
+      "type": "graph",
+      "title": "Request Count by Model",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (model) (forecast_requests_total)",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        { "format": "short", "label": "Requests", "show": true },
+        { "show": false }
+      ],
+      "xaxis": { "show": true },
+      "lines": false,
+      "bars": true,
+      "fill": 1,
+      "linewidth": 1,
+      "nullPointMode": "null"
+    },
+    {
+      "id": 4,
+      "type": "graph",
+      "title": "Error Rate",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(forecast_requests_total{status=\"error\"}[5m])",
+          "legendFormat": "errors {{model}}",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        { "format": "reqps", "label": "Errors/s", "show": true },
+        { "show": false }
+      ],
+      "xaxis": { "show": true },
+      "lines": true,
+      "fill": 1,
+      "linewidth": 2,
+      "nullPointMode": "null",
+      "thresholds": [
+        { "colorMode": "critical", "fill": true, "line": true, "op": "gt", "value": 0.1 }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["pulsepredict", "api", "forecasting"],
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "PulsePredict API Metrics",
+  "uid": "pulsepredict-api-v1",
+  "version": 1
+}

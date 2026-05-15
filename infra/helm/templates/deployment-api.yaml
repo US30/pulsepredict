@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pulsepredict-api
+  labels:
+    app.kubernetes.io/name: pulsepredict-api
+    app.kubernetes.io/part-of: pulsepredict
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pulsepredict-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pulsepredict-api
+        app.kubernetes.io/part-of: pulsepredict
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: api
+          image: "{{ .Values.image.api.repository }}:{{ .Values.image.api.tag }}"
+          imagePullPolicy: {{ .Values.image.api.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            {{- toYaml .Values.env.api | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: {{ .Values.resources.api.requests.memory }}
+              cpu: {{ .Values.resources.api.requests.cpu }}
+            limits:
+              memory: {{ .Values.resources.api.limits.memory }}
+              cpu: {{ .Values.resources.api.limits.cpu }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pulsepredict-api
+  labels:
+    app.kubernetes.io/name: pulsepredict-api
+    app.kubernetes.io/part-of: pulsepredict
+spec:
+  type: {{ .Values.service.api.type }}
+  selector:
+    app.kubernetes.io/name: pulsepredict-api
+  ports:
+    - name: http
+      port: {{ .Values.service.api.port }}
+      targetPort: http
+      protocol: TCP

@@ -1,0 +1,20 @@
+FROM pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml .
+RUN pip install --no-cache-dir \
+    neuralforecast \
+    statsforecast \
+    hierarchicalforecast \
+    chronos-forecasting \
+    mlflow \
+    celery[redis] \
+    polars \
+    duckdb \
+    pyarrow \
+    redis \
+    minio \
+    evidently \
+    prometheus-client
+COPY . .
+CMD ["celery", "-A", "apps.api.celery_app.celery_app", "worker", "--loglevel=info", "--queues=forecast"]

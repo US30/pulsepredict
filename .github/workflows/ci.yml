@@ -1,0 +1,237 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Lint
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: ruff check
+        run: ruff check ml/ apps/ services/ scripts/
+
+      - name: ruff format check
+        run: ruff format --check ml/ apps/ services/ scripts/
+
+  # ---------------------------------------------------------------------------
+  # 2. Type-check
+  # ---------------------------------------------------------------------------
+  type-check:
+    name: Type-check (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install mypy and stubs
+        run: pip install mypy types-redis
+
+      - name: mypy
+        run: mypy ml/ apps/ --ignore-missing-imports --no-error-summary
+
+  # ---------------------------------------------------------------------------
+  # 3. Unit tests
+  # ---------------------------------------------------------------------------
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install CPU-only PyTorch
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install project dependencies
+        run: |
+          pip install \
+            neuralforecast \
+            statsforecast \
+            hierarchicalforecast \
+            pytest \
+            pytest-cov
+
+      - name: Run unit tests
+        run: |
+          pytest tests/unit/ -v \
+            --cov=ml \
+            --cov-report=xml \
+            --cov-report=term-missing
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: unit
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # 4. Integration tests
+  # ---------------------------------------------------------------------------
+  integration-tests:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: pulsepredict
+          POSTGRES_USER: pulsepredict
+          POSTGRES_PASSWORD: changeme
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pulsepredict"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg2://pulsepredict:changeme@localhost:5432/pulsepredict
+      CELERY_BROKER_URL: redis://localhost:6379/1
+      CELERY_RESULT_BACKEND: redis://localhost:6379/2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]" 2>/dev/null || pip install \
+            fastapi \
+            uvicorn \
+            celery[redis] \
+            sqlalchemy \
+            psycopg2-binary \
+            redis \
+            pytest \
+            pytest-asyncio \
+            httpx
+
+      - name: Run integration tests
+        run: |
+          pytest tests/integration/ -v -m integration --timeout=60
+
+  # ---------------------------------------------------------------------------
+  # 5. GPU smoke test (self-hosted, main branch only)
+  # ---------------------------------------------------------------------------
+  smoke-gpu:
+    name: GPU Smoke Test
+    runs-on: [self-hosted, gpu]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python via Poetry
+        run: |
+          pip install poetry
+          poetry install --no-interaction
+
+      - name: Smoke — import all models
+        run: |
+          poetry run python - <<'EOF'
+          import sys
+          print("Python:", sys.version)
+
+          # Verify core imports
+          import torch
+          print("PyTorch:", torch.__version__)
+          print("CUDA available:", torch.cuda.is_available())
+          if torch.cuda.is_available():
+              print("GPU:", torch.cuda.get_device_name(0))
+
+          import neuralforecast
+          import statsforecast
+          import hierarchicalforecast
+          print("neuralforecast:", neuralforecast.__version__)
+
+          from neuralforecast import NeuralForecast
+          from neuralforecast.models import PatchTST
+          import numpy as np
+          import pandas as pd
+
+          # Build minimal synthetic dataset
+          T = 128
+          H = 28
+          df = pd.DataFrame({
+              "unique_id": ["s1"] * T,
+              "ds": pd.date_range("2020-01-01", periods=T, freq="D"),
+              "y": np.sin(np.linspace(0, 4 * np.pi, T)) + np.random.randn(T) * 0.1,
+          })
+
+          # PatchTST forward pass
+          print("\n--- PatchTSTForecaster ---")
+          patchtst = NeuralForecast(
+              models=[PatchTST(h=H, input_size=2*H, max_steps=3)],
+              freq="D",
+          )
+          patchtst.fit(df)
+          preds = patchtst.predict()
+          assert len(preds) == H, f"Expected {H} predictions, got {len(preds)}"
+          print(f"PatchTST predictions shape: {preds.shape}  OK")
+
+          # Chronos forward pass
+          print("\n--- ChronosForecaster ---")
+          try:
+              from chronos import ChronosPipeline
+              pipeline = ChronosPipeline.from_pretrained(
+                  "amazon/chronos-t5-tiny",
+                  device_map="cuda" if torch.cuda.is_available() else "cpu",
+                  torch_dtype=torch.float32,
+              )
+              context = torch.tensor(df["y"].values, dtype=torch.float32).unsqueeze(0)
+              quantile_preds, mean, std = pipeline.predict_quantiles(
+                  context, prediction_length=H, quantile_levels=[0.1, 0.5, 0.9]
+              )
+              assert quantile_preds.shape[-1] == H, "Chronos output length mismatch"
+              print(f"Chronos quantile_preds shape: {quantile_preds.shape}  OK")
+          except ImportError:
+              print("chronos-forecasting not installed — skipping Chronos smoke test")
+
+          print("\nAll smoke tests passed.")
+          EOF

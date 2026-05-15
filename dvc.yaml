@@ -1,0 +1,103 @@
+stages:
+
+  # ---------------------------------------------------------------------------
+  # 1. RAW DATA DOWNLOAD
+  # ---------------------------------------------------------------------------
+  download:
+    cmd: python scripts/download_m5.py
+    deps:
+      - scripts/download_m5.py
+    outs:
+      - data/raw/m5/
+
+  # ---------------------------------------------------------------------------
+  # 2. FEATURE ENGINEERING
+  # ---------------------------------------------------------------------------
+  features:
+    cmd: >
+      python -m ml.data.feature_lib build
+        --input  data/raw/m5/
+        --output data/features/
+    deps:
+      - ml/data/feature_lib.py
+      - data/raw/m5/
+    outs:
+      - data/features/
+
+  # ---------------------------------------------------------------------------
+  # 3. MODEL TRAINING — DeepAR
+  # ---------------------------------------------------------------------------
+  train_deepar:
+    cmd: python -m ml.train.cli fit --config configs/deepar.yaml
+    deps:
+      - ml/models/deepar.py
+      - ml/train/deepar_module.py
+      - data/features/
+      - configs/deepar.yaml
+    outs:
+      - artifacts/deepar/
+
+  # ---------------------------------------------------------------------------
+  # 4. MODEL TRAINING — PatchTST
+  # ---------------------------------------------------------------------------
+  train_patchtst:
+    cmd: python -m ml.train.cli fit --config configs/patchtst.yaml
+    deps:
+      - ml/models/patchtst.py
+      - ml/train/patchtst_module.py
+      - data/features/
+      - configs/patchtst.yaml
+    outs:
+      - artifacts/patchtst/
+
+  # ---------------------------------------------------------------------------
+  # 5. MODEL TRAINING — TFT
+  # ---------------------------------------------------------------------------
+  train_tft:
+    cmd: python -m ml.train.cli fit --config configs/tft.yaml
+    deps:
+      - ml/models/tft.py
+      - ml/train/tft_module.py
+      - data/features/
+      - configs/tft.yaml
+    outs:
+      - artifacts/tft/
+
+  # ---------------------------------------------------------------------------
+  # 6. WALK-FORWARD BACKTEST
+  # ---------------------------------------------------------------------------
+  backtest:
+    cmd: python scripts/run_backtest.py
+    deps:
+      - scripts/run_backtest.py
+      - artifacts/
+      - data/features/
+    outs:
+      - reports/backtest/
+    metrics:
+      - reports/backtest/metrics.json:
+          cache: false
+
+  # ---------------------------------------------------------------------------
+  # 7. CONFORMAL PREDICTION COVERAGE
+  # ---------------------------------------------------------------------------
+  conformal:
+    cmd: python -m ml.conformal.evaluate
+    deps:
+      - ml/conformal/
+      - artifacts/
+      - data/features/
+    metrics:
+      - reports/conformal_coverage.json:
+          cache: false
+
+  # ---------------------------------------------------------------------------
+  # 8. HIERARCHICAL RECONCILIATION
+  # ---------------------------------------------------------------------------
+  reconcile:
+    cmd: python -m ml.reconcile.run_reconcile
+    deps:
+      - ml/reconcile/
+      - artifacts/
+    outs:
+      - reports/reconciled/

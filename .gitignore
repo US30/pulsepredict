@@ -1,0 +1,88 @@
+# =============================================================================
+#  PulsePredict — .gitignore
+# =============================================================================
+
+# ── Python bytecode ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# ── Distribution / packaging ─────────────────────────────────────────────────
+*.egg-info/
+dist/
+build/
+*.egg
+MANIFEST
+
+# ── Virtual environments ─────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+.env/
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+.env
+*.pem
+*.key
+secrets/
+
+# ── Data (large binary files tracked via DVC, not git) ───────────────────────
+data/raw/
+data/processed/
+data/features/
+data/interim/
+
+# ── Model artefacts (tracked via DVC / MLflow) ───────────────────────────────
+artifacts/
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.bin
+*.safetensors
+
+# ── Reports (generated) ──────────────────────────────────────────────────────
+reports/
+
+# ── MLflow local tracking ────────────────────────────────────────────────────
+mlruns/
+/mlflow.db
+
+# ── DVC internals ────────────────────────────────────────────────────────────
+.dvc/tmp/
+.dvc/cache/
+
+# ── Linting / type-checking caches ──────────────────────────────────────────
+.mypy_cache/
+.ruff_cache/
+
+# ── Test / coverage ──────────────────────────────────────────────────────────
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ── Jupyter ──────────────────────────────────────────────────────────────────
+notebooks/.ipynb_checkpoints/
+.ipynb_checkpoints/
+
+# ── Node / frontend ──────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+
+# ── macOS ────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── IDEs ─────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Docker generated ─────────────────────────────────────────────────────────
+docker-compose.override.yml

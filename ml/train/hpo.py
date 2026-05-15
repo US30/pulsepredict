@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import argparse
 import logging
+from pathlib import Path
 from typing import Optional
 
 import optuna
@@ -77,15 +80,29 @@ def objective(trial: optuna.Trial, base_config: dict) -> float:
     # ------------------------------------------------------------------ #
     from ml.data.dataset import M5Dataset, DatasetConfig
     from ml.eval.metrics import evaluate_forecast
+    from ml.train.cli import _get_model_class, _build_config
 
     dataset_cfg = DatasetConfig(**config.get("dataset", {}))
     dataset = M5Dataset(dataset_cfg)
-    train_df, val_df = dataset.get_train_val_split()
+    data_dir = Path(dataset_cfg.data_dir)
+    try:
+        raw = dataset.load_raw(data_dir)
+        train_df, val_df, _ = dataset.get_splits(raw)
+    except FileNotFoundError:
+        import numpy as np
+        import pandas as pd
+        horizon = config.get("horizon", 28)
+        n_obs = 200
+        rows = [{"unique_id": "SYNTH", "ds": d, "y": float(np.random.poisson(10))}
+                for d in pd.date_range("2014-01-01", periods=n_obs)]
+        full = pd.DataFrame(rows)
+        train_df = full.iloc[: n_obs - horizon].copy()
+        val_df = full.iloc[n_obs - horizon :].copy()
 
-    # Import model
-    from ml.train.cli import _get_model_class
-    ForecasterClass = _get_model_class(model_name)
-    forecaster = ForecasterClass(h=config["horizon"], **config["model_params"])
+    ForecasterClass, ConfigClass = _get_model_class(model_name)
+    merged_cfg = {**config, **config.get("model_params", {})}
+    model_config = _build_config(ConfigClass, merged_cfg)
+    forecaster = ForecasterClass(model_config)
 
     forecaster.fit(train_df)
     preds_df = forecaster.predict()
@@ -127,6 +144,7 @@ def run_hpo(
     base_config: Optional[dict] = None,
     n_trials: int = 50,
     experiment_name: str = "pulsepredict-hpo",
+    data_dir: str = "data/raw/m5",
 ) -> dict:
     """
     Create an Optuna study with HyperbandPruner, run *n_trials* trials, and
@@ -151,7 +169,7 @@ def run_hpo(
     if base_config is None:
         base_config = {}
 
-    base_config = {**base_config, "model": model_name}
+    base_config = {**base_config, "model": model_name, "dataset": {"data_dir": data_dir}}
 
     pruner = HyperbandPruner(
         min_resource=1,

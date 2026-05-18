@@ -1,0 +1,129 @@
+PulsePredict — How to Run
+==========================
+Probabilistic multi-horizon time-series forecasting: PatchTST + TFT + Chronos +
+conformal prediction + MinT reconciliation + Bayesian CausalImpact
+
+PREREQUISITES
+-------------
+  Python       3.11+
+  Docker       24+ (with Docker Compose v2)
+  NVIDIA driver 535+ (CUDA 12.1)
+  GPU          RTX 2070 Super 8 GB or better
+  Disk         ~40 GB free (M5 raw + features + artifacts)
+  Kaggle API   account + key (for M5 dataset)
+
+  Verify GPU:
+  nvidia-smi
+  python -c "import torch; print(torch.cuda.is_available())"
+
+STEP 1 — Clone & Install
+-------------------------
+  git clone https://github.com/US30/pulsepredict.git
+  cd pulsepredict
+  python3.11 -m venv .venv
+  source .venv/bin/activate       # Windows: .venv\Scripts\activate
+  pip install -e .
+  make dev-install
+
+STEP 2 — Configure
+-------------------
+  cp .env.example .env
+  # Edit .env and set:
+  #   KAGGLE_USERNAME=<your_username>
+  #   KAGGLE_KEY=<your_api_key>
+
+STEP 3 — Start Infrastructure
+-------------------------------
+  make up
+  # Services after startup:
+  #   FastAPI scoring  http://localhost:8000/docs
+  #   Streamlit UI     http://localhost:8501
+  #   MLflow           http://localhost:5001
+  #   Grafana          http://localhost:3001  (admin/admin)
+  #   Prometheus       http://localhost:9090
+  #   MinIO Console    http://localhost:9001  (minioadmin/minioadmin)
+
+  Create MinIO buckets (first run only):
+  docker run --rm --network host minio/mc alias set local http://localhost:9000 minioadmin minioadmin
+  docker run --rm --network host minio/mc mb local/pulsepredict-data
+  docker run --rm --network host minio/mc mb local/pulsepredict-mlflow
+
+STEP 4 — Download Data
+-----------------------
+  make download-m5             # M5 Walmart dataset (~500 MB) -> data/raw/m5/
+  make download-ett            # ETT benchmark (optional) -> data/raw/ett/
+
+STEP 5 — Feature Engineering
+------------------------------
+  python -m ml.data.feature_lib build \
+      --input data/raw/m5/ \
+      --output data/features/
+  # Polars + DuckDB pipeline; writes Parquet shards (~2 GB)
+
+STEP 6 — Train Models
+----------------------
+  make train-deepar        # DeepAR baseline     (~20 min, CPU)
+  make train-nbeatsx       # N-BEATSx baseline   (~15 min, CPU)
+  make train-patchtst      # PatchTST            (~1.5 hr, GPU ~3 GB)
+  make train-tft           # TFT                 (~2 hr,   GPU ~4 GB)
+  make train-all           # all models sequentially
+
+  OOM? Lower batch_size in configs/<model>.yaml (e.g. 64 -> 32)
+
+  Chronos-T5 (zero-shot, no training):
+  python -m ml.train.cli fit --config configs/chronos.yaml
+
+STEP 7 — HPO (Optional)
+------------------------
+  make hpo-patchtst        # Optuna 50 trials -> best_params logged to MLflow
+
+STEP 8 — Evaluation
+---------------------
+  make backtest            # walk-forward rolling-origin backtest
+                           # -> reports/backtest/metrics.json
+                           # Metrics: MAE, RMSE, MASE, sMAPE, CRPS, coverage
+
+STEP 9 — Conformal Prediction
+-------------------------------
+  make conformal           # split + adaptive conformal intervals (ACI)
+                           # -> reports/conformal_coverage.json
+                           # Coverage at alpha = 0.05, 0.10, 0.20
+
+STEP 10 — Hierarchical Reconciliation
+---------------------------------------
+  make reconcile           # MinT-Shrink + BottomUp + TopDown
+                           # -> reports/reconciled/
+
+STEP 11 — Bayesian Intervention (CausalImpact)
+------------------------------------------------
+  make intervention        # PyMC local-level BSTS on M5 promo case study
+                           # -> reports/intervention/ + MLflow artifacts
+
+STEP 12 — View Results
+-----------------------
+  MLflow    http://localhost:5001  -- metrics, params, artifacts for all runs
+  Grafana   http://localhost:3001  -- API latency + prediction dashboards
+  Streamlit http://localhost:8501  -- interactive forecast explorer
+
+STEP 13 — Tests
+----------------
+  make test                # unit tests (no GPU, no real data)
+  make smoke               # 1-epoch smoke train on synthetic data
+
+FULL DVC PIPELINE (reproduce everything in one command)
+---------------------------------------------------------
+  dvc repro                # reruns only changed stages (content-hash based)
+
+GPU MEMORY REFERENCE
+---------------------
+  DeepAR    ~1.5 GB   tune: batch_size, input_size
+  N-BEATSx  ~1 GB     tune: batch_size, stacks
+  PatchTST  ~3 GB     tune: batch_size, patch_len, d_model
+  TFT       ~4 GB     tune: batch_size, hidden_size
+  Chronos   ~3 GB     zero-shot, no training
+
+STOP THE STACK
+---------------
+  make down
+  # To also delete data volumes:
+  docker compose down -v

@@ -84,7 +84,7 @@ class ChronosForecaster:
         self._pipeline = ChronosPipeline.from_pretrained(
             config.model_id,
             device_map=config.device,
-            torch_dtype=getattr(torch, config.torch_dtype),
+            dtype=getattr(torch, config.torch_dtype),
         )
 
     # ------------------------------------------------------------------
@@ -105,9 +105,9 @@ class ChronosForecaster:
         np.ndarray
             Sample trajectories of shape ``[num_samples, prediction_length]``.
         """
-        context = torch.tensor(history, dtype=torch.float32).unsqueeze(0)
+        inputs = torch.tensor(history, dtype=torch.float32).unsqueeze(0)
         forecast = self._pipeline.predict(
-            context=context,
+            inputs=inputs,
             prediction_length=self.config.prediction_length,
             num_samples=self.config.num_samples,
             temperature=self.config.temperature,

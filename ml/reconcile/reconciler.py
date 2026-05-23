@@ -61,7 +61,7 @@ class HierarchicalReconciler:
         """Instantiate the chosen reconciliation method object."""
         method = self.config.method
         if method == "mint_shrink":
-            return MinTrace(method="mint_shrunk")
+            return MinTrace(method="mint_shrink")
         elif method == "bottomup":
             return BottomUp()
         elif method == "topdown_proportion":

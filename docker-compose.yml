@@ -98,7 +98,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: services/api/Dockerfile
+      dockerfile: infra/docker/Dockerfile.api
     restart: unless-stopped
     environment:
       <<: *common-env
@@ -121,7 +121,7 @@ services:
   worker:
     build:
       context: .
-      dockerfile: services/api/Dockerfile
+      dockerfile: infra/docker/Dockerfile.api
     restart: unless-stopped
     command: celery -A services.worker.celery_app worker --loglevel=info --concurrency=2
     environment:
@@ -137,7 +137,7 @@ services:
   ui:
     build:
       context: .
-      dockerfile: apps/ui/Dockerfile
+      dockerfile: infra/docker/Dockerfile.ui
     restart: unless-stopped
     environment:
       API_BASE_URL:          http://api:8000

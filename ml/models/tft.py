@@ -18,7 +18,7 @@ from typing import Optional
 import pandas as pd
 from neuralforecast import NeuralForecast
 from neuralforecast.losses.pytorch import MAE, MQLoss
-from neuralforecast.models import TemporalFusionTransformer
+from neuralforecast.models import TFT as TemporalFusionTransformer
 
 
 @dataclass

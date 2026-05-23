@@ -100,9 +100,8 @@ class NBEATSxForecaster:
             if config.quantiles
             else MAE()
         )
-        # Repeat mlp_units per block to match neuralforecast API
         n_blocks_list = [config.n_blocks] * len(config.stack_types)
-        mlp_units_per_stack = [config.mlp_units] * len(config.stack_types)
+        mlp_units_per_stack = config.mlp_units * len(config.stack_types)
 
         model = NBEATSx(
             h=config.horizon,

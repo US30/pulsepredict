@@ -1,5 +1,10 @@
 model: tft
+data_dir: data/raw/m5
+max_series: 1000
 horizon: 28
+train_cutoff: "2016-03-27"
+val_cutoff: "2016-04-24"
+test_cutoff: "2016-05-22"
 input_size: 104
 hidden_size: 256
 n_heads: 4

@@ -1,9 +1,14 @@
 model: deepar
+data_dir: data/raw/m5
+max_series: 1000
 horizon: 28
+train_cutoff: "2016-03-27"
+val_cutoff: "2016-04-24"
+test_cutoff: "2016-05-22"
 input_size: 52
-hidden_size: 64
-n_layers: 2
-dropout: 0.1
+lstm_hidden_size: 64
+lstm_n_layers: 2
+lstm_dropout: 0.1
 batch_size: 32
 max_steps: 3000
 learning_rate: 1.0e-3

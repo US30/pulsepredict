@@ -48,9 +48,9 @@ class DeepARConfig:
 
     horizon: int = 28
     input_size: int = 52
-    hidden_size: int = 64
-    n_layers: int = 2
-    dropout: float = 0.1
+    lstm_hidden_size: int = 64
+    lstm_n_layers: int = 2
+    lstm_dropout: float = 0.1
     batch_size: int = 32
     max_steps: int = 3000
     learning_rate: float = 1e-3
@@ -83,9 +83,9 @@ class DeepARForecaster:
         model = DeepAR(
             h=config.horizon,
             input_size=config.input_size,
-            hidden_size=config.hidden_size,
-            n_layers=config.n_layers,
-            dropout=config.dropout,
+            lstm_hidden_size=config.lstm_hidden_size,
+            lstm_n_layers=config.lstm_n_layers,
+            lstm_dropout=config.lstm_dropout,
             batch_size=config.batch_size,
             max_steps=config.max_steps,
             learning_rate=config.learning_rate,

@@ -79,7 +79,7 @@ def fit(args: argparse.Namespace) -> None:
     # ------------------------------------------------------------------
     from ml.data.dataset import M5Dataset, DatasetConfig
 
-    ds_cfg_keys = {"dataset", "data_dir", "horizon", "train_cutoff", "val_cutoff", "test_cutoff"}
+    ds_cfg_keys = {"dataset", "data_dir", "horizon", "max_series", "train_cutoff", "val_cutoff", "test_cutoff"}
     ds_cfg_dict = {k: v for k, v in config.items() if k in ds_cfg_keys}
     dataset_cfg = DatasetConfig(**ds_cfg_dict)
     dataset = M5Dataset(dataset_cfg)

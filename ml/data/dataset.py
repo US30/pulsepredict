@@ -40,8 +40,9 @@ class DatasetConfig:
     """
 
     dataset: str = "m5"
-    data_dir: str = "data/raw"
+    data_dir: str = "data/raw/m5"
     horizon: int = 28
+    max_series: int = 0
     train_cutoff: str = "2016-04-24"
     val_cutoff: str = "2016-04-24"
     test_cutoff: str = "2016-05-22"
@@ -89,6 +90,13 @@ class M5Dataset:
 
         # ---- Sales: wide -> long ------------------------------------------
         sales_wide = pl.read_csv(sales_path)
+
+        if self.config.max_series > 0:
+            sales_wide = sales_wide.sample(
+                n=min(self.config.max_series, len(sales_wide)),
+                seed=42,
+            )
+
         id_cols = ["id", "item_id", "dept_id", "cat_id", "store_id", "state_id"]
         d_cols = [c for c in sales_wide.columns if c.startswith("d_")]
 

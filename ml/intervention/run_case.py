@@ -5,9 +5,13 @@ import json
 import logging
 from pathlib import Path
 
-import mlflow
 import numpy as np
 import pandas as pd
+
+try:
+    import mlflow
+except ImportError:
+    mlflow = None
 
 from ml.intervention.causal_impact import BayesianCausalImpact, InterventionConfig
 
@@ -53,12 +57,18 @@ def run_promotion_case(
     pre_mask = df["ds"] < intervention_ts
     post_mask = df["ds"] >= intervention_ts
 
-    y_pre = df.loc[pre_mask, "y"].values
-    y_post = df.loc[post_mask, "y"].values
+    y_pre_all = df.loc[pre_mask, "y"].values
+    y_post_all = df.loc[post_mask, "y"].values
+    max_post = 28
+    y_post = y_post_all[:max_post] if len(y_post_all) > max_post else y_post_all
+
+    # Limit pre-period to last 100 obs — keeps GaussianRandomWalk tractable for NUTS
+    max_pre = 100
+    y_pre = y_pre_all[-max_pre:] if len(y_pre_all) > max_pre else y_pre_all
     y_full = np.concatenate([y_pre, y_post])
 
     log.info("Fitting BayesianCausalImpact on %d pre-period obs...", len(y_pre))
-    config = InterventionConfig(mcmc_samples=500, tune=300)
+    config = InterventionConfig(mcmc_samples=500, tune=300, trend=True)
     bci = BayesianCausalImpact(config)
     bci.fit(y_pre)
 
@@ -76,22 +86,27 @@ def run_promotion_case(
              result["credible_interval_95"][0],
              result["credible_interval_95"][1])
 
-    plot_path = str(output_dir / f"{series_id}_impact.png")
+    case_name = f"{series_id}_{intervention_date}"
+    plot_path = str(output_dir / f"{case_name}_impact.png")
     bci.plot(y_full, idata, intervention_date, plot_path)
     log.info("Plot saved → %s", plot_path)
 
-    report_path = output_dir / f"{series_id}_report.json"
+    report_path = output_dir / f"{case_name}_report.json"
     with open(report_path, "w") as f:
         json.dump(result, f, indent=2)
 
-    mlflow.set_experiment(experiment_name)
-    with mlflow.start_run(run_name=f"intervention_{series_id}"):
-        mlflow.log_params({"series_id": series_id, "intervention_date": intervention_date})
-        mlflow.log_metric("relative_effect_pct", result["relative_effect_pct"])
-        mlflow.log_metric("cumulative_effect", result["cumulative_effect"])
-        mlflow.log_metric("posterior_prob_positive", result["posterior_prob_positive"])
-        mlflow.log_artifact(str(report_path))
-        mlflow.log_artifact(plot_path)
+    if mlflow is not None:
+        try:
+            mlflow.set_experiment(experiment_name)
+            with mlflow.start_run(run_name=f"intervention_{series_id}"):
+                mlflow.log_params({"series_id": series_id, "intervention_date": intervention_date})
+                mlflow.log_metric("relative_effect_pct", result["relative_effect_pct"])
+                mlflow.log_metric("cumulative_effect", result["cumulative_effect"])
+                mlflow.log_metric("posterior_prob_positive", result["posterior_prob_positive"])
+                mlflow.log_artifact(str(report_path))
+                mlflow.log_artifact(plot_path)
+        except Exception as e:
+            log.warning("MLflow logging failed: %s", e)
 
     return result
 

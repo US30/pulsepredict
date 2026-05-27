@@ -1,6 +1,18 @@
+"""
+Bayesian CausalImpact for intervention/promotion-lift estimation.
+
+Uses a low-dimensional Bayesian structural model (intercept + trend +
+weekly seasonality) fit on the pre-intervention period, then generates
+posterior-predictive counterfactual forecasts for the post-period.
+The causal effect is estimated as observed − counterfactual.
+
+This design keeps the parameter space small (~10 dims) so NUTS converges
+fast even without a C compiler (PyTensor Python backend on Windows).
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import arviz as az
@@ -13,8 +25,6 @@ import pymc as pm
 class InterventionConfig:
     n_seasons: int = 7
     trend: bool = True
-    pre_period: tuple[int, int] | None = None
-    post_period: tuple[int, int] | None = None
     mcmc_samples: int = 1000
     tune: int = 500
     target_accept: float = 0.9
@@ -27,82 +37,91 @@ class BayesianCausalImpact:
         self._model: pm.Model | None = None
         self._idata: az.InferenceData | None = None
         self._n_pre: int = 0
+        self._y_pre_std: float = 1.0
+        self._y_pre_mean: float = 0.0
 
-    def fit(self, y_pre: np.ndarray, X_pre: np.ndarray | None = None) -> "BayesianCausalImpact":
+    def fit(self, y_pre: np.ndarray) -> "BayesianCausalImpact":
         n = len(y_pre)
         self._n_pre = n
+        self._y_pre_mean = float(np.mean(y_pre))
+        self._y_pre_std = float(np.std(y_pre)) + 1e-6
+
+        t = np.arange(n, dtype=np.float64) / n
+        dow = np.arange(n) % self.config.n_seasons
 
         with pm.Model() as model:
-            sigma_level = pm.HalfNormal("sigma_level", sigma=1.0)
-            sigma_obs = pm.HalfNormal("sigma_obs", sigma=np.std(y_pre) + 1e-6)
+            alpha = pm.Normal("alpha", mu=self._y_pre_mean, sigma=self._y_pre_std * 2)
+            sigma = pm.HalfNormal("sigma", sigma=self._y_pre_std)
 
-            level = pm.GaussianRandomWalk(
-                "level",
-                sigma=sigma_level,
-                init_dist=pm.Normal.dist(mu=y_pre[0], sigma=np.std(y_pre) + 1e-6),
-                shape=n,
-            )
+            mu = alpha
 
-            mu = level
             if self.config.trend:
-                slope_init = pm.Normal("slope_init", mu=0, sigma=0.1)
-                sigma_slope = pm.HalfNormal("sigma_slope", sigma=0.1)
-                slope = pm.GaussianRandomWalk(
-                    "slope",
-                    sigma=sigma_slope,
-                    init_dist=pm.Normal.dist(mu=slope_init, sigma=0.1),
-                    shape=n,
-                )
-                mu = mu + slope
+                beta = pm.Normal("beta", mu=0, sigma=self._y_pre_std)
+                mu = mu + beta * t
 
-            pm.Normal("obs", mu=mu, sigma=sigma_obs, observed=y_pre)
+            if self.config.n_seasons > 1:
+                season_effect = pm.Normal(
+                    "season", mu=0, sigma=self._y_pre_std * 0.5,
+                    shape=self.config.n_seasons,
+                )
+                mu = mu + season_effect[dow]
+
+            pm.Normal("obs", mu=mu, sigma=sigma, observed=y_pre)
             self._model = model
 
         with self._model:
-            self._idata = pm.sample(
-                draws=self.config.mcmc_samples,
-                tune=self.config.tune,
-                target_accept=self.config.target_accept,
-                random_seed=self.config.random_seed,
-                progressbar=True,
-            )
+            try:
+                import nutpie
+                compiled = nutpie.compile_pymc_model(self._model)
+                self._idata = nutpie.sample(
+                    compiled,
+                    draws=self.config.mcmc_samples,
+                    tune=self.config.tune,
+                    chains=2,
+                    seed=self.config.random_seed,
+                    progress_bar=True,
+                )
+            except (ImportError, Exception):
+                self._idata = pm.sample(
+                    draws=self.config.mcmc_samples,
+                    tune=self.config.tune,
+                    target_accept=self.config.target_accept,
+                    random_seed=self.config.random_seed,
+                    cores=1,
+                    chains=2,
+                    progressbar=True,
+                )
 
         return self
 
     def predict_counterfactual(self, n_post: int) -> az.InferenceData:
-        if self._model is None or self._idata is None:
+        if self._idata is None:
             raise RuntimeError("Call fit() before predict_counterfactual()")
 
-        with pm.Model():
-            sigma_level = pm.HalfNormal("sigma_level", sigma=1.0)
-            sigma_obs = pm.HalfNormal("sigma_obs", sigma=1.0)
+        n_pre = self._n_pre
+        t_post = np.arange(n_pre, n_pre + n_post, dtype=np.float64) / n_pre
+        dow_post = np.arange(n_pre, n_pre + n_post) % self.config.n_seasons
 
-            level = pm.GaussianRandomWalk(
-                "level",
-                sigma=sigma_level,
-                init_dist=pm.Normal.dist(mu=0, sigma=1.0),
-                shape=n_post,
-            )
-            mu = level
-            if self.config.trend:
-                sigma_slope = pm.HalfNormal("sigma_slope", sigma=0.1)
-                slope = pm.GaussianRandomWalk(
-                    "slope",
-                    sigma=sigma_slope,
-                    init_dist=pm.Normal.dist(mu=0, sigma=0.1),
-                    shape=n_post,
-                )
-                mu = mu + slope
+        posterior = self._idata.posterior
+        alpha = posterior["alpha"].values.flatten()
+        sigma = posterior["sigma"].values.flatten()
+        n_samples = len(alpha)
 
-            posterior_level = self._idata.posterior["level"].values
-            last_levels = posterior_level[:, :, -1]
-            flat_last = last_levels.flatten()
-            cf_samples = flat_last[:, None] + np.random.randn(len(flat_last), n_post) * np.exp(
-                self._idata.posterior["sigma_obs"].values.flatten()
-            ).mean()
+        mu = alpha[:, None] * np.ones((1, n_post))
+
+        if self.config.trend and "beta" in posterior:
+            beta = posterior["beta"].values.flatten()
+            mu = mu + beta[:, None] * t_post[None, :]
+
+        if self.config.n_seasons > 1 and "season" in posterior:
+            season = posterior["season"].values.reshape(n_samples, self.config.n_seasons)
+            mu = mu + season[:, dow_post]
+
+        rng = np.random.default_rng(self.config.random_seed)
+        cf_samples = mu + rng.normal(0, 1, mu.shape) * sigma[:, None]
 
         cf_idata = az.convert_to_inference_data(
-            {"counterfactual": cf_samples.reshape(1, -1, n_post)}
+            {"counterfactual": cf_samples.reshape(1, n_samples, n_post)}
         )
         return cf_idata
 
@@ -113,9 +132,10 @@ class BayesianCausalImpact:
         pointwise = y_post[None, :] - cf
         cumulative = pointwise.sum(axis=1)
         cf_mean = cf.mean(axis=0)
-        relative_effect = (y_post.mean() - cf_mean.mean()) / (cf_mean.mean() + 1e-9)
+        relative_effect = (y_post.mean() - cf_mean.mean()) / (abs(cf_mean.mean()) + 1e-9)
         p_positive = float((cumulative > 0).mean())
-        ci_lo, ci_hi = float(np.percentile(cumulative, 2.5)), float(np.percentile(cumulative, 97.5))
+        ci_lo = float(np.percentile(cumulative, 2.5))
+        ci_hi = float(np.percentile(cumulative, 97.5))
 
         return {
             "cumulative_effect": float(cumulative.mean()),
@@ -165,7 +185,7 @@ class BayesianCausalImpact:
         ax1.plot(t_post, pw_mean, color="green")
         ax1.fill_between(t_post, pw_lo, pw_hi, color="green", alpha=0.2)
         ax1.axhline(0, color="black", linestyle="--")
-        ax1.set_title("Pointwise Effect (Observed − Counterfactual)")
+        ax1.set_title("Pointwise Effect (Observed - Counterfactual)")
 
         ax2 = axes[2]
         ax2.plot(t_post, cum_mean, color="purple")

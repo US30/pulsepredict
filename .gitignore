@@ -84,5 +84,8 @@ out/
 *.swo
 *~
 
+# ── PyTorch Lightning ────────────────────────────────────────────────────────
+lightning_logs/
+
 # ── Docker generated ─────────────────────────────────────────────────────────
 docker-compose.override.yml

@@ -1,0 +1,47 @@
+groups:
+  - name: pulsepredict_drift
+    rules:
+      - alert: ModelDriftDetected
+        expr: pulsepredict_drift_detected == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Drift detected for model {{ $labels.model }}"
+          description: "PSI or KS test indicates distribution shift for {{ $labels.model }}."
+
+      - alert: PSISignificantShift
+        expr: pulsepredict_psi > 0.25
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Significant PSI shift for {{ $labels.model }}"
+          description: "PSI={{ $value }} exceeds 0.25 threshold for {{ $labels.model }}."
+
+      - alert: CoverageDrop
+        expr: pulsepredict_coverage_90 < 0.85
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Coverage dropped below 85% for {{ $labels.model }}"
+          description: "90% conformal coverage is {{ $value }} for {{ $labels.model }}, recalibration needed."
+
+      - alert: MAESpike
+        expr: pulsepredict_mae > 1.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MAE spike for {{ $labels.model }}"
+          description: "MAE={{ $value }} exceeds 1.5 threshold for {{ $labels.model }}."
+
+      - alert: HighErrorRate
+        expr: rate(forecast_requests_total{status="error"}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High forecast error rate for {{ $labels.model }}"
+          description: "Error rate is {{ $value }} req/s for {{ $labels.model }}."

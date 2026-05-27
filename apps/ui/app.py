@@ -323,6 +323,82 @@ def page_intervention_analysis():
 
 
 # =========================================================================
+# Page 6: Drift Monitor
+# =========================================================================
+
+def page_drift_monitor():
+    st.title("Model Drift Monitor")
+
+    drift_path = REPORTS_DIR / "drift" / "drift_report.json"
+    if not drift_path.exists():
+        st.warning("No drift report found. Run `python scripts/run_drift_eval.py` first.")
+        return
+
+    data = _load_json(drift_path)
+    if not data:
+        return
+
+    df = pd.DataFrame(data)
+
+    # Summary metrics
+    st.subheader("Current Status")
+    models = df["model"].unique()
+    cols = st.columns(len(models))
+    for i, model in enumerate(models):
+        model_df = df[df["model"] == model]
+        latest = model_df.iloc[-1]
+        with cols[i]:
+            st.metric(f"{model.upper()} PSI", f"{latest['psi']:.4f}",
+                      delta="DRIFT" if latest["drift_detected"] else "OK",
+                      delta_color="inverse" if latest["drift_detected"] else "normal")
+            st.metric("Coverage", f"{latest['coverage_90']:.1%}")
+            st.metric("MAE", f"{latest['mae']:.4f}")
+
+    # PSI over windows
+    st.subheader("PSI Trend by Window")
+    fig_psi = go.Figure()
+    for model in models:
+        model_df = df[df["model"] == model]
+        fig_psi.add_trace(go.Scatter(
+            x=model_df["window"], y=model_df["psi"],
+            mode="lines+markers", name=model.upper(),
+        ))
+    fig_psi.add_hline(y=0.1, line_dash="dash", line_color="orange", annotation_text="Moderate")
+    fig_psi.add_hline(y=0.25, line_dash="dash", line_color="red", annotation_text="Significant")
+    fig_psi.update_layout(yaxis_title="PSI", height=400)
+    st.plotly_chart(fig_psi, use_container_width=True)
+
+    # Coverage over windows
+    st.subheader("90% Coverage Drift")
+    fig_cov = go.Figure()
+    for model in models:
+        model_df = df[df["model"] == model]
+        fig_cov.add_trace(go.Scatter(
+            x=model_df["window"], y=model_df["coverage_90"],
+            mode="lines+markers", name=model.upper(),
+        ))
+    fig_cov.add_hline(y=0.90, line_dash="dash", line_color="red", annotation_text="90% target")
+    fig_cov.update_layout(yaxis_title="Coverage", yaxis=dict(range=[0.85, 0.95]), height=400)
+    st.plotly_chart(fig_cov, use_container_width=True)
+
+    # MAE over windows
+    st.subheader("MAE Trend")
+    fig_mae = go.Figure()
+    for model in models:
+        model_df = df[df["model"] == model]
+        fig_mae.add_trace(go.Scatter(
+            x=model_df["window"], y=model_df["mae"],
+            mode="lines+markers", name=model.upper(),
+        ))
+    fig_mae.update_layout(yaxis_title="MAE", height=400)
+    st.plotly_chart(fig_mae, use_container_width=True)
+
+    # Full table
+    with st.expander("Full Drift Report"):
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+# =========================================================================
 # Navigation
 # =========================================================================
 
@@ -332,6 +408,7 @@ PAGES = {
     "Conformal Coverage": page_conformal_coverage,
     "Hierarchy View": page_hierarchy_view,
     "Intervention Analysis": page_intervention_analysis,
+    "Drift Monitor": page_drift_monitor,
 }
 
 PAGE_ICONS = {
@@ -340,6 +417,7 @@ PAGE_ICONS = {
     "Conformal Coverage": "🎯",
     "Hierarchy View": "🏗️",
     "Intervention Analysis": "⚡",
+    "Drift Monitor": "📈",
 }
 
 with st.sidebar:

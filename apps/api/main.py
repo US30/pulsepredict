@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 from starlette.responses import Response
 import time, logging, uuid, json
 from pathlib import Path
@@ -23,6 +23,14 @@ REQUEST_LATENCY = Histogram(
     ["model"],
     buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
 )
+
+# Drift monitoring gauges (updated by batch drift eval)
+DRIFT_PSI = Gauge("pulsepredict_psi", "Population Stability Index", ["model"])
+DRIFT_MAE = Gauge("pulsepredict_mae", "Mean Absolute Error", ["model"])
+DRIFT_COVERAGE = Gauge("pulsepredict_coverage_90", "Conformal 90% coverage", ["model"])
+DRIFT_DETECTED = Gauge("pulsepredict_drift_detected", "Drift detected flag", ["model"])
+PREDICTION_MEAN = Gauge("pulsepredict_prediction_mean", "Mean prediction value", ["model"])
+PREDICTION_STD = Gauge("pulsepredict_prediction_std", "Prediction std dev", ["model"])
 
 # ---------------------------------------------------------------------------
 # Pydantic schemas
@@ -222,6 +230,32 @@ async def get_batch_status(job_id: str) -> BatchJobStatus:
         created_at=datetime.datetime.utcnow().isoformat(),
         result_url=result_url,
     )
+
+
+@app.post("/drift/update")
+async def update_drift_metrics() -> dict:
+    """Load latest drift report and update Prometheus gauges."""
+    drift_path = Path(__file__).resolve().parents[2] / "reports" / "drift" / "drift_report.json"
+    if not drift_path.exists():
+        raise HTTPException(status_code=404, detail="No drift report found. Run scripts/run_drift_eval.py first.")
+
+    with open(drift_path) as f:
+        reports = json.load(f)
+
+    # Use last window per model
+    latest: dict[str, dict] = {}
+    for r in reports:
+        latest[r["model"]] = r
+
+    for model, r in latest.items():
+        DRIFT_PSI.labels(model=model).set(r["psi"])
+        DRIFT_MAE.labels(model=model).set(r["mae"])
+        DRIFT_COVERAGE.labels(model=model).set(r["coverage_90"])
+        DRIFT_DETECTED.labels(model=model).set(1 if r["drift_detected"] else 0)
+        PREDICTION_MEAN.labels(model=model).set(r["pred_mean"])
+        PREDICTION_STD.labels(model=model).set(r["pred_std"])
+
+    return {"updated": len(latest), "models": list(latest.keys())}
 
 
 @app.get("/metrics")
